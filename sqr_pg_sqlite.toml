@@ -1,0 +1,11 @@
+[[listeners]]
+protocol = "postgres"
+addr = "127.0.0.1:5439"
+password = "secret"
+backend = "sqlite://sqr_test.db"
+
+[[listeners]]
+protocol = "mysql"
+addr = "127.0.0.1:3307"
+password = "secret"
+backend = "sqlite://sqr_test.db"
