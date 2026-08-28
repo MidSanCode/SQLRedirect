@@ -54,6 +54,75 @@ impl Value {
             Value::Blob(b) => Some(escape_bytea(b)),
         }
     }
+
+    /// Coerce the value to `bool` (for wire encoding at a bool column).
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Bool(b) => Some(*b),
+            Value::SmallInt(i) => Some(*i != 0),
+            Value::Integer(i) => Some(*i != 0),
+            Value::BigInt(i) => Some(*i != 0),
+            Value::Text(s) => Some(!s.is_empty()),
+            _ => None,
+        }
+    }
+
+    /// Coerce the value to `i16` (for wire encoding at an int2 column).
+    pub fn as_i16(&self) -> Option<i16> {
+        match self {
+            Value::SmallInt(i) => Some(*i),
+            Value::Integer(i) => i16::try_from(*i).ok(),
+            Value::BigInt(i) => i16::try_from(*i).ok(),
+            Value::Bool(b) => Some(if *b { 1 } else { 0 }),
+            _ => None,
+        }
+    }
+
+    /// Coerce the value to `i32` (for wire encoding at an int4 column).
+    pub fn as_i32(&self) -> Option<i32> {
+        match self {
+            Value::SmallInt(i) => Some(*i as i32),
+            Value::Integer(i) => Some(*i),
+            Value::BigInt(i) => i32::try_from(*i).ok(),
+            Value::Bool(b) => Some(if *b { 1 } else { 0 }),
+            _ => None,
+        }
+    }
+
+    /// Coerce the value to `i64` (for wire encoding at an int8 column).
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Value::SmallInt(i) => Some(*i as i64),
+            Value::Integer(i) => Some(*i as i64),
+            Value::BigInt(i) => Some(*i),
+            Value::Bool(b) => Some(if *b { 1 } else { 0 }),
+            _ => None,
+        }
+    }
+
+    /// Coerce the value to `f32` (for wire encoding at a float4 column).
+    pub fn as_f32(&self) -> Option<f32> {
+        match self {
+            Value::SmallInt(i) => Some(*i as f32),
+            Value::Integer(i) => Some(*i as f32),
+            Value::BigInt(i) => Some(*i as f32),
+            Value::Real(f) => Some(*f),
+            Value::Double(f) => Some(*f as f32),
+            _ => None,
+        }
+    }
+
+    /// Coerce the value to `f64` (for wire encoding at a float8 column).
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Value::SmallInt(i) => Some(*i as f64),
+            Value::Integer(i) => Some(*i as f64),
+            Value::BigInt(i) => Some(*i as f64),
+            Value::Real(f) => Some(*f as f64),
+            Value::Double(f) => Some(*f),
+            _ => None,
+        }
+    }
 }
 
 fn format_float(f: f64) -> String {

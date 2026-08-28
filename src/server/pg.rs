@@ -233,12 +233,13 @@ fn max_positional_placeholder(sql: &str) -> usize {
 
 fn field_info(meta: &FieldMeta) -> FieldInfo {
     let oid = kind_to_pg_oid(&meta.kind);
+    let ty = Type::from_oid(oid as u32).unwrap_or(Type::TEXT);
     FieldInfo::new(
         meta.name.clone(),
         None,
         None,
-        Type::from_oid(oid as u32).unwrap_or(Type::TEXT),
-        FieldFormat::Text,
+        ty,
+        FieldFormat::Binary,
     )
 }
 
@@ -251,18 +252,71 @@ fn encode_rows(
     let mut encoder = DataRowEncoder::new(schema.clone());
     for row in rows {
         for idx in 0..ncols {
+            // Encode according to the *declared column type* (the wire OID),
+            // coercing the portable value to that width so the client decodes
+            // it correctly. SQLite stores every integer as i64 even for an
+            // `INTEGER` (INT4) column, so we downcast when the wire says int4.
+            let field_type = schema[idx].datatype();
             match &row[idx] {
-                None | Some(Value::Null) => encoder
-                    .encode_field(&None::<String>)
-                    .expect("encoding null field"),
+                None | Some(Value::Null) => {
+                    // Encode NULL with the field's own type so pgwire does not
+                    // reject a type mismatch (e.g. `None::<String>` on an INT4
+                    // column).
+                    match *field_type {
+                        Type::BOOL => encoder
+                            .encode_field(&None::<bool>)
+                            .expect("encoding null bool"),
+                        Type::INT2 => encoder
+                            .encode_field(&None::<i16>)
+                            .expect("encoding null int2"),
+                        Type::INT4 => encoder
+                            .encode_field(&None::<i32>)
+                            .expect("encoding null int4"),
+                        Type::INT8 => encoder
+                            .encode_field(&None::<i64>)
+                            .expect("encoding null int8"),
+                        Type::FLOAT4 => encoder
+                            .encode_field(&None::<f32>)
+                            .expect("encoding null float4"),
+                        Type::FLOAT8 => encoder
+                            .encode_field(&None::<f64>)
+                            .expect("encoding null float8"),
+                        Type::TEXT => encoder
+                            .encode_field(&None::<String>)
+                            .expect("encoding null text"),
+                        Type::BYTEA => encoder
+                            .encode_field(&None::<Vec<u8>>)
+                            .expect("encoding null bytea"),
+                        _ => encoder
+                            .encode_field(&None::<String>)
+                            .expect("encoding null fallback"),
+                    }
+                }
                 Some(Value::Bool(b)) => encoder.encode_field(b).expect("encoding bool"),
-                Some(Value::SmallInt(i)) => encoder.encode_field(i).expect("encoding int2"),
-                Some(Value::Integer(i)) => encoder.encode_field(i).expect("encoding int4"),
-                Some(Value::BigInt(i)) => encoder.encode_field(i).expect("encoding int8"),
-                Some(Value::Real(f)) => encoder.encode_field(f).expect("encoding float4"),
-                Some(Value::Double(f)) => encoder.encode_field(f).expect("encoding float8"),
-                Some(Value::Text(s)) => encoder.encode_field(s).expect("encoding text"),
-                Some(Value::Blob(b)) => encoder.encode_field(b).expect("encoding bytea"),
+                Some(v) => match *field_type {
+                    Type::BOOL => encoder
+                        .encode_field(&v.as_bool().unwrap_or(false))
+                        .expect("encoding bool"),
+                    Type::INT2 => encoder
+                        .encode_field(&v.as_i16().unwrap_or(0))
+                        .expect("encoding int2"),
+                    Type::INT4 => encoder
+                        .encode_field(&v.as_i32().unwrap_or(0))
+                        .expect("encoding int4"),
+                    Type::INT8 => encoder
+                        .encode_field(&v.as_i64().unwrap_or(0))
+                        .expect("encoding int8"),
+                    Type::FLOAT4 => encoder
+                        .encode_field(&v.as_f32().unwrap_or(0.0))
+                        .expect("encoding float4"),
+                    Type::FLOAT8 => encoder
+                        .encode_field(&v.as_f64().unwrap_or(0.0))
+                        .expect("encoding float8"),
+                    Type::TEXT | Type::BYTEA | _ => {
+                        let text = v.as_pg_text().unwrap_or_default();
+                        encoder.encode_field(&text).expect("encoding text")
+                    }
+                },
             }
         }
         results.push(Ok(encoder.take_row()));

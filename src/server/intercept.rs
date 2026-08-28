@@ -243,8 +243,17 @@ fn sqlite_column_row(r: &[Option<Value>]) -> Vec<Option<Value>> {
         Some(Value::Text(t)) if !t.is_empty() => Value::Text(t),
         _ => Value::Text("".to_string()),
     };
-    let notnull = matches!(get(3), Some(Value::Integer(n)) if n != 0);
-    let pk = matches!(get(5), Some(Value::Integer(n)) if n != 0);
+    // SQLite stores all integers as 64-bit; sqlx decodes them as BigInt.
+    let int_value = |idx: usize| -> Option<i64> {
+        match get(idx) {
+            Some(Value::SmallInt(n)) => Some(n as i64),
+            Some(Value::Integer(n)) => Some(n as i64),
+            Some(Value::BigInt(n)) => Some(n),
+            _ => None,
+        }
+    };
+    let notnull = int_value(3).is_some_and(|n| n != 0);
+    let pk = int_value(5).is_some_and(|n| n != 0);
     let dflt = get(4);
     let extra = Value::Text(String::new());
     vec![

@@ -5,7 +5,7 @@ use core::ops::ControlFlow;
 use sqlparser::ast::{
     Assignment, AssignmentTarget, ConflictTarget, Expr, Function,
     FunctionArg, FunctionArgExpr, FunctionArgumentList, FunctionArguments, Ident, Insert,
-    LimitClause, ObjectName, ObjectNamePart, OnConflict, OnConflictAction, OnInsert, Statement,
+    LimitClause, ObjectName, OnConflict, OnConflictAction, OnInsert, Statement,
     Statement as AstStatement, Update, Delete, VisitorMut,
 };
 
@@ -133,31 +133,19 @@ fn rewrite_insert(ins: &mut Insert, target: TargetDialect) -> Result<()> {
             }));
         }
         if matches!(ins.on, Some(OnInsert::DuplicateKeyUpdate(_))) {
-            // Inserted columns used to rewrite RHS references to excluded.*
-            let columns = ins
-                .columns
-                .iter()
-                .map(|c| c.to_string().to_ascii_lowercase())
-                .collect::<Vec<_>>();
             if let Some(OnInsert::DuplicateKeyUpdate(assignments)) = ins.on.take() {
                 let mut assigns = assignments.clone();
+                // Rewrite MySQL `VALUES(col)` references to SQLite `excluded.col`.
                 for a in assigns.iter_mut() {
-                    a.value = rewrite_excluded_ref(&a.value, &columns);
-                    a.value = apply_excluded_ref(a.value.clone(), &columns);
+                    a.value = rewrite_values_ref(a.value.clone());
                 }
+                // MySQL's `ON DUPLICATE KEY UPDATE` fires on *any* unique/PK
+                // violation, so we map it to a bare `ON CONFLICT DO UPDATE`
+                // without an explicit conflict target: SQLite allows the
+                // DO UPDATE action without a target and will use the unique
+                // key that triggered the violation automatically.
                 ins.on = Some(OnInsert::OnConflict(OnConflict {
-                    conflict_target: Some(ConflictTarget::Columns(
-                        assignments
-                            .iter()
-                            .map(|a| match &a.target {
-                                AssignmentTarget::ColumnName(n) => match n.0.last() {
-                                    Some(ObjectNamePart::Identifier(i)) => i.clone(),
-                                    _ => Ident::new("id"),
-                                },
-                                _ => Ident::new("id"),
-                            })
-                            .collect(),
-                    )),
+                    conflict_target: None,
                     action: OnConflictAction::DoUpdate(sqlparser::ast::DoUpdate {
                         assignments: assigns,
                         selection: None,
@@ -175,79 +163,52 @@ fn rewrite_insert(ins: &mut Insert, target: TargetDialect) -> Result<()> {
     Ok(())
 }
 
-/// Rewrite references like `col` or `tbl.col` inside an `ON DUPLICATE KEY
-/// UPDATE` RHS to reference the proposed row (`excluded.col`).
-fn rewrite_excluded_ref(expr: &Expr, inserted_columns: &[String]) -> Expr {
+/// Rewrite MySQL `VALUES(col)` function calls inside an `ON DUPLICATE KEY
+/// UPDATE` RHS to SQLite `excluded.col`. Bare column references are kept as-is
+/// (they refer to the existing row in both MySQL and SQLite `ON CONFLICT`).
+fn rewrite_values_ref(expr: Expr) -> Expr {
     match expr {
-        Expr::Identifier(ident) => {
-            if inserted_columns.contains(&ident.value.to_ascii_lowercase()) {
-                Expr::CompoundIdentifier(vec![
-                    Ident::new("excluded"),
-                    ident.clone(),
-                ])
-            } else {
-                expr.clone()
-            }
-        }
-        Expr::CompoundIdentifier(parts) => {
-            if let Some(last) = parts.last() {
-                if inserted_columns.contains(&last.value.to_ascii_lowercase()) {
-                    Expr::CompoundIdentifier(vec![
-                        Ident::new("excluded"),
-                        last.clone(),
-                    ])
-                } else {
-                    expr.clone()
-                }
-            } else {
-                expr.clone()
-            }
-        }
-        other => other.clone(),
-    }
-}
-
-/// Recursively rewrite every bare column reference inside an expression to
-/// `excluded.col` (used for `ON DUPLICATE KEY UPDATE ... VALUES` arithmetic
-/// like `v = v + 1`).
-fn apply_excluded_ref(expr: Expr, columns: &[String]) -> Expr {
-    match expr {
-        // Leaf cases: rewrite bare references.
-        e @ (Expr::Identifier(_) | Expr::CompoundIdentifier(_)) => {
-            rewrite_excluded_ref(&e, columns)
-        }
-        Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
-            left: Box::new(apply_excluded_ref(*left, columns)),
-            op,
-            right: Box::new(apply_excluded_ref(*right, columns)),
-        },
-        Expr::UnaryOp { op, expr } => Expr::UnaryOp {
-            op,
-            expr: Box::new(apply_excluded_ref(*expr, columns)),
-        },
-        Expr::Nested(e) => Expr::Nested(Box::new(apply_excluded_ref(*e, columns))),
         Expr::Function(mut f) => {
+            let name = f.name.to_string().to_ascii_uppercase();
+            if name == "VALUES" {
+                if let FunctionArguments::List(list) = &f.args {
+                    if list.args.len() == 1 {
+                        if let FunctionArg::Unnamed(FunctionArgExpr::Expr(inner)) = &list.args[0] {
+                            if let Expr::Identifier(col) = inner {
+                                return Expr::CompoundIdentifier(vec![
+                                    Ident::new("excluded"),
+                                    col.clone(),
+                                ]);
+                            }
+                        }
+                    }
+                }
+            }
             if let FunctionArguments::List(list) = &mut f.args {
                 for arg in list.args.iter_mut() {
                     if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) = arg {
-                        *e = apply_excluded_ref(std::mem::replace(
+                        *e = rewrite_values_ref(std::mem::replace(
                             e,
                             Expr::Value(sqlparser::ast::Value::Null.into()),
-                        ), columns);
+                        ));
                     }
                 }
             }
             Expr::Function(f)
         }
-        Expr::Cast {
+        Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
+            left: Box::new(rewrite_values_ref(*left)),
+            op,
+            right: Box::new(rewrite_values_ref(*right)),
+        },
+        Expr::UnaryOp { op, expr } => Expr::UnaryOp {
+            op,
+            expr: Box::new(rewrite_values_ref(*expr)),
+        },
+        Expr::Nested(e) => Expr::Nested(Box::new(rewrite_values_ref(*e))),
+        Expr::Cast { kind, expr, data_type, format, array } => Expr::Cast {
             kind,
-            expr: inner,
-            data_type,
-            format,
-            array,
-        } => Expr::Cast {
-            kind,
-            expr: Box::new(apply_excluded_ref(*inner, columns)),
+            expr: Box::new(rewrite_values_ref(*expr)),
             data_type,
             format,
             array,

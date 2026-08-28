@@ -76,8 +76,19 @@ fn mysql_on_duplicate_key_update() {
     let up = out.to_uppercase();
     assert!(up.contains("ON CONFLICT"), "got: {out}");
     assert!(up.contains("DO UPDATE"), "got: {out}");
-    // RHS column refs become excluded.col
-    assert!(up.contains("EXCLUDED"), "got: {out}");
+    // Bare column refs on the RHS keep referring to the existing row
+    // (same in MySQL `ON DUPLICATE KEY UPDATE` and SQLite `ON CONFLICT`).
+    assert!(!up.contains("EXCLUDED"), "got: {out}");
+
+    // `VALUES(col)` on the RHS maps to `excluded.col` so MySQL semantics
+    // for `VALUES()` survive the translation.
+    let out = tr
+        .translate(
+            "INSERT INTO counters (k, v) VALUES ('a', 1) \
+             ON DUPLICATE KEY UPDATE v = VALUES(v) + 1",
+        )
+        .unwrap();
+    assert!(out.to_uppercase().contains("EXCLUDED"), "got: {out}");
 }
 
 // ---------------------------------------------------------------------------

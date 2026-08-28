@@ -62,6 +62,27 @@ impl TargetDialect {
             ))),
         }
     }
+
+    /// Detect the target dialect from a live `sqlx::Any` connection by probing
+    /// the backend's catalog (SQLite exposes `sqlite_master`; the others do not).
+    pub async fn from_conn(conn: &mut sqlx::AnyConnection) -> Result<Self> {
+        let is_sqlite = sqlx::query("SELECT count(*) FROM sqlite_master")
+            .fetch_optional(&mut *conn)
+            .await
+            .is_ok();
+        if is_sqlite {
+            return Ok(TargetDialect::Sqlite);
+        }
+        // PostgreSQL reports itself via `version()`; MySQL via `@@version`.
+        let pg = sqlx::query("SELECT version()")
+            .fetch_optional(&mut *conn)
+            .await
+            .is_ok();
+        if pg {
+            return Ok(TargetDialect::Postgres);
+        }
+        Ok(TargetDialect::Mysql)
+    }
 }
 
 /// Translates SQL between a front-end dialect and a target dialect.

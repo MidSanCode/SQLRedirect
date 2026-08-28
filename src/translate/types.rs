@@ -173,10 +173,9 @@ fn rewrite_column_options(
             }
             TargetDialect::Sqlite => {
                 col.data_type = int_type(width, "SQLITE");
-                kept.push(column_option(ColumnOption::DialectSpecific(vec![
-                    Token::make_keyword("AUTOINCREMENT"),
-                ])));
-                // SQLite needs `INTEGER PRIMARY KEY AUTOINCREMENT`.
+                // SQLite syntax is `INTEGER PRIMARY KEY AUTOINCREMENT`: the
+                // PRIMARY KEY clause must precede AUTOINCREMENT, so push it
+                // first and only then the AUTOINCREMENT keyword.
                 if !kept.iter().any(|o| matches!(o.option, ColumnOption::PrimaryKey(_))) {
                     kept.push(ColumnOptionDef {
                         name: None,
@@ -190,6 +189,9 @@ fn rewrite_column_options(
                         }),
                     });
                 }
+                kept.push(column_option(ColumnOption::DialectSpecific(vec![
+                    Token::make_keyword("AUTOINCREMENT"),
+                ])));
             }
             TargetDialect::Postgres => {
                 // Convert to `SERIAL`/`BIGSERIAL`/`SMALLSERIAL`.
@@ -215,15 +217,16 @@ fn column_option(option: ColumnOption) -> ColumnOptionDef {
 }
 
 fn int_type(width: AutoInc, dialect: &str) -> DataType {
-    let name = match width {
-        AutoInc::Small => "SMALLINT",
-        AutoInc::Int => "INTEGER",
-        AutoInc::Big => "BIGINT",
+    // SQLite only permits `INTEGER PRIMARY KEY AUTOINCREMENT`; any wider type
+    // would be rejected, so auto-increment columns always collapse to INTEGER
+    // there (the wire type is recovered separately from the catalog).
+    let name = match (dialect, width) {
+        ("SQLITE", _) => "INTEGER",
+        (_, AutoInc::Small) => "SMALLINT",
+        (_, AutoInc::Int) => "INTEGER",
+        (_, AutoInc::Big) => "BIGINT",
     };
-    match dialect {
-        "MYSQL" => DataType::Custom(ObjectName::from(Ident::new(name)), vec![]),
-        _ => DataType::Custom(ObjectName::from(Ident::new(name)), vec![]),
-    }
+    DataType::Custom(ObjectName::from(Ident::new(name)), vec![])
 }
 
 /// Map a data type variant to a portable form for the target dialect.
@@ -266,9 +269,17 @@ fn map_type(dt: &DataType, target: TargetDialect) -> Result<DataType> {
         },
         TargetDialect::Sqlite => match dt {
             Bool | Boolean => Custom(obj("BOOLEAN"), vec![]),
-            Int(_) | Int4(_) | Integer(_) | Int2(_) | SmallInt(_) | TinyInt(_) | MediumInt(_)
-            | Int8(_) | BigInt(_) | IntUnsigned(_) | Int4Unsigned(_) | IntegerUnsigned(_)
-            | Int2Unsigned(_) | SmallIntUnsigned(_) | Int8Unsigned(_) | BigIntUnsigned(_) => {
+            // Preserve integer width so the catalog (PRAGMA table_info)
+            // carries enough information for wire-level type inference
+            // (BIGINT → INT8, SMALLINT → INT2, INTEGER → INT4).
+            BigInt(_) | Int8(_) | BigIntUnsigned(_) | Int8Unsigned(_) => {
+                Custom(obj("BIGINT"), vec![])
+            }
+            SmallInt(_) | Int2(_) | SmallIntUnsigned(_) | Int2Unsigned(_) | TinyInt(_) => {
+                Custom(obj("SMALLINT"), vec![])
+            }
+            Int(_) | Int4(_) | Integer(_) | MediumInt(_)
+            | IntUnsigned(_) | Int4Unsigned(_) | IntegerUnsigned(_) => {
                 Custom(obj("INTEGER"), vec![])
             }
             Float(_) | Float4 | Float32 | Float8 | Float64 | Double(_) | DoubleUnsigned(_)

@@ -150,7 +150,10 @@ impl MySqlSession for MySession {
                 }
                 Ok(result)
             }
-            Outcome::Affected { .. } => Ok(ResultSet::empty()),
+            Outcome::Affected { last_insert_id, .. } => {
+                let lid = last_insert_id.unwrap_or(0).max(0) as u64;
+                Ok(ResultSet::empty().with_last_insert_id(lid))
+            }
         }
     }
 }
