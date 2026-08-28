@@ -1,0 +1,8 @@
+# cargo-audit configuration
+# https://docs.rs/cargo-audit/latest/cargo_audit/
+
+[advisories]
+# RUSTSEC-2026-0097: Unsoundness in rand::rng() with custom logger.
+# We use rand 0.8.x which does not have the rand::rng() API (introduced in 0.9).
+# Only rand::random() is used in this crate — not affected.
+ignore = ["RUSTSEC-2026-0097"]

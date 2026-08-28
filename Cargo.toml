@@ -16,7 +16,7 @@ mysql_async = "0.37"
 pgwire = { version = "0.40", default-features = false, features = ["server-api-ring"] }
 serde = { version = "1", features = ["derive"] }
 sqlparser = { version = "0.62", features = ["visitor"] }
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "any", "postgres", "mysql", "sqlite"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any", "postgres", "mysql", "sqlite"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 toml = "0.8"
@@ -33,3 +33,6 @@ lto = "thin"
 [profile.dev]
 debug = 0
 incremental = false
+
+[patch.crates-io]
+mysql-mimic = { path = "vendor/mysql-mimic" }

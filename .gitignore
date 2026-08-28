@@ -1,0 +1,3 @@
+target/
+*.log
+sqr_test.db

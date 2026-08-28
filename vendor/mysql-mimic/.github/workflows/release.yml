@@ -1,0 +1,205 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: macos-arm64
+            pkg_deb: false
+            pkg_rpm: false
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: macos-amd64
+            pkg_deb: false
+            pkg_rpm: false
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: linux-amd64
+            pkg_deb: true
+            pkg_rpm: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact: linux-arm64
+            pkg_deb: true
+            pkg_rpm: true
+
+    runs-on: ${{ matrix.os }}
+    name: build-${{ matrix.artifact }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Configure linker for cross-compilation (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+
+      - name: Build release binary
+        run: cargo build --release --bin mysql-mimic-server --target ${{ matrix.target }}
+
+      - name: Package tarball
+        id: tarball
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGING="mysql-mimic-${VERSION}-${{ matrix.artifact }}"
+          mkdir -p "$STAGING/bin"
+
+          BASE="target/${{ matrix.target }}/release"
+          cp "$BASE/mysql-mimic-server" "$STAGING/bin/"
+          cp README.md LICENSE "$STAGING/"
+
+          TARBALL="${STAGING}.tar.gz"
+          tar czf "$TARBALL" "$STAGING"
+          echo "path=$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "name=$TARBALL" >> "$GITHUB_OUTPUT"
+
+      - name: Build Debian package
+        if: matrix.pkg_deb
+        id: deb
+        shell: bash
+        run: |
+          cargo install cargo-deb
+          VERSION="${GITHUB_REF_NAME#v}"
+          BASE="target/${{ matrix.target }}/release"
+
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            DEB_ARCH="arm64"
+          else
+            DEB_ARCH="amd64"
+          fi
+
+          mkdir -p target/release
+          ln -sf "$(pwd)/$BASE/mysql-mimic-server" "target/release/mysql-mimic-server"
+
+          DEB_FILE="mysql-mimic_${VERSION}_${DEB_ARCH}.deb"
+          cargo deb --no-build --no-strip \
+            --target "${{ matrix.target }}" \
+            --deb-version "$VERSION" \
+            --output "$DEB_FILE" \
+            || cargo deb --no-build --no-strip \
+              --deb-version "$VERSION" \
+              --output "$DEB_FILE"
+
+          echo "path=$DEB_FILE" >> "$GITHUB_OUTPUT"
+          echo "name=$DEB_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Build RPM package
+        if: matrix.pkg_rpm
+        id: rpm
+        shell: bash
+        run: |
+          cargo install cargo-generate-rpm
+          VERSION="${GITHUB_REF_NAME#v}"
+          BASE="target/${{ matrix.target }}/release"
+
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            RPM_ARCH="aarch64"
+          else
+            RPM_ARCH="x86_64"
+          fi
+
+          mkdir -p target/release
+          ln -sf "$(pwd)/$BASE/mysql-mimic-server" "target/release/mysql-mimic-server"
+
+          cargo generate-rpm \
+            --set-metadata="version=\"$VERSION\"" \
+            --set-metadata="arch=\"$RPM_ARCH\""
+
+          RPM_FILE=$(find target/generate-rpm -name '*.rpm' 2>/dev/null | head -1)
+          if [[ -n "$RPM_FILE" ]]; then
+            DEST="mysql-mimic-${VERSION}-1.${RPM_ARCH}.rpm"
+            mv "$RPM_FILE" "$DEST"
+            echo "path=$DEST" >> "$GITHUB_OUTPUT"
+            echo "name=$DEST" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload tarball
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ matrix.artifact }}
+          path: ${{ steps.tarball.outputs.path }}
+
+      - name: Upload deb
+        if: always() && matrix.pkg_deb && steps.deb.outputs.path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.artifact }}
+          path: ${{ steps.deb.outputs.path }}
+
+      - name: Upload rpm
+        if: always() && matrix.pkg_rpm && steps.rpm.outputs.path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.artifact }}
+          path: ${{ steps.rpm.outputs.path }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    name: github-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts/ -type f | sort
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.deb
+            artifacts/*.rpm
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    name: publish-crates-io
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish to crates.io
+        run: cargo publish --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

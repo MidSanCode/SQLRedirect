@@ -1,0 +1,54 @@
+[package]
+name = "mysql-mimic"
+version = "0.9.0"
+edition = "2021"
+description = "A Rust library that implements the MySQL wire protocol server-side"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/protegrity/mysql-mimic-rust"
+homepage = "https://github.com/protegrity/mysql-mimic-rust"
+documentation = "https://github.com/protegrity/mysql-mimic-rust#readme"
+keywords = ["mysql", "protocol", "server", "tokio", "database"]
+categories = ["database", "network-programming"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+sqlparser = { version = "0.53", features = ["visitor"] }
+thiserror = "2"
+tracing = "0.1"
+rand = "0.8"
+sha1 = "0.10"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tracing-subscriber = "0.3"
+
+[[example]]
+name = "simple_server"
+path = "examples/simple_server.rs"
+
+[[bin]]
+name = "mysql-mimic-server"
+path = "src/bin/mysql-mimic-server.rs"
+
+[package.metadata.deb]
+maintainer = "Protegrity <engineering@protegrity.com>"
+copyright = "2024-2026 Protegrity"
+extended-description = """\
+mysql-mimic is a Rust library implementing the MySQL wire protocol server-side. \
+This package provides a runnable example server binary."""
+section = "database"
+priority = "optional"
+assets = [
+	["target/release/mysql-mimic-server", "usr/bin/mysql-mimic-server", "755"],
+	["README.md", "usr/share/doc/mysql-mimic/README.md", "644"],
+	["LICENSE", "usr/share/doc/mysql-mimic/LICENSE", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+	{ source = "target/release/mysql-mimic-server", dest = "/usr/bin/mysql-mimic-server", mode = "0755" },
+	{ source = "README.md", dest = "/usr/share/doc/mysql-mimic/README.md", mode = "0644" },
+	{ source = "LICENSE", dest = "/usr/share/doc/mysql-mimic/LICENSE", mode = "0644" },
+]

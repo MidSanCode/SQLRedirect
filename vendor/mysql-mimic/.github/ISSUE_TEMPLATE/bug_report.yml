@@ -1,0 +1,32 @@
+name: Bug report
+description: File a bug report to help us improve
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you expect and what actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Minimal reproducible steps or sample code.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version/commit
+      placeholder: e.g. 0.9.0 or commit SHA
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Rust version, and relevant details.
