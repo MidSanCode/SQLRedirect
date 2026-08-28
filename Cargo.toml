@@ -12,7 +12,6 @@ bytes = "1"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
 mysql-mimic = "0.9"
-mysql_async = "0.37"
 pgwire = { version = "0.40", default-features = false, features = ["server-api-ring"] }
 serde = { version = "1", features = ["derive"] }
 sqlparser = { version = "0.62", features = ["visitor"] }
@@ -22,10 +21,6 @@ tokio = { version = "1", features = ["full"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-[dev-dependencies]
-mysql_async = { version = "0.37", default-features = false, features = ["minimal"] }
-tokio-postgres = "0.7"
 
 [profile.release]
 lto = "thin"
