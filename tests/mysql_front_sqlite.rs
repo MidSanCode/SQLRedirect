@@ -100,9 +100,16 @@ async fn mysql_show_and_describe() {
         "pets not listed in: {tables:?}"
     );
 
-    // DESCRIBE pets -> Field column lists both columns.
-    let cols: Vec<(String,)> = conn.query("DESCRIBE pets").await.expect("describe");
-    let names: Vec<&str> = cols.iter().map(|(f,)| f.as_str()).collect();
+    // DESCRIBE pets returns SHOW COLUMNS shape: (Field, Type, Null, Key, Default, Extra).
+    let cols: Vec<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+    )> = conn.query("DESCRIBE pets").await.expect("describe");
+    let names: Vec<&str> = cols.iter().map(|(f, ..)| f.as_str()).collect();
     assert!(names.contains(&"id"), "{names:?}");
     assert!(names.contains(&"name"), "{names:?}");
 

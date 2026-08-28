@@ -32,8 +32,16 @@ pub fn init_drivers() {
 }
 
 /// SQLite backend URL that creates the file if missing.
+///
+/// sqlx parses `sqlite://` URLs with the `//` as an authority separator, so an
+/// absolute Windows path (`C:\...`) must be passed with forward slashes and a
+/// leading slash (`sqlite:///C:/...`) to avoid being mistaken for a host.
 pub fn sqlite_url(db: &PathBuf) -> String {
-    format!("sqlite://{}?mode=rwc", db.display())
+    let mut p = db.display().to_string().replace('\\', "/");
+    if !p.starts_with('/') {
+        p = format!("/{p}");
+    }
+    format!("sqlite://{p}?mode=rwc")
 }
 
 /// Start a PostgreSQL-protocol listener backed by `db`, returning its port.
