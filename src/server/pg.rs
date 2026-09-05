@@ -202,7 +202,12 @@ async fn probe_result_schema(session: &Session, sql: &str) -> Vec<FieldInfo> {
         Err(_) => return vec![],
     };
     match crate::backend::describe(conn.as_mut().unwrap(), &probe_sql).await {
-        Ok(fields) => fields.iter().map(field_info).collect(),
+        // Describe reports text format, matching a real PostgreSQL server's
+        // RowDescription; the actual rows are encoded per the Bind request.
+        Ok(fields) => fields
+            .iter()
+            .map(|f| field_info(f, FieldFormat::Text))
+            .collect(),
         Err(_) => vec![],
     }
 }
@@ -231,15 +236,20 @@ fn max_positional_placeholder(sql: &str) -> usize {
     max
 }
 
-fn field_info(meta: &FieldMeta) -> FieldInfo {
+fn field_info(meta: &FieldMeta, format: FieldFormat) -> FieldInfo {
     let oid = kind_to_pg_oid(&meta.kind);
     let ty = Type::from_oid(oid as u32).unwrap_or(Type::TEXT);
-    FieldInfo::new(
-        meta.name.clone(),
-        None,
-        None,
-        ty,
-        FieldFormat::Binary,
+    FieldInfo::new(meta.name.clone(), None, None, ty, format)
+}
+
+/// Build the result schema for `outcome` using the given per-field format.
+fn schema_for(fields: &[FieldMeta], format_for: impl Fn(usize) -> FieldFormat) -> Arc<Vec<FieldInfo>> {
+    Arc::new(
+        fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| field_info(f, format_for(i)))
+            .collect(),
     )
 }
 
@@ -324,10 +334,10 @@ fn encode_rows(
     stream::iter(results)
 }
 
-fn response_for(_session: &Session, outcome: &Outcome) -> Response {
+fn response_for(_session: &Session, outcome: &Outcome, format_for: impl Fn(usize) -> FieldFormat) -> Response {
     match outcome {
         Outcome::Rows { fields, rows } => {
-            let schema = Arc::new(fields.iter().map(field_info).collect::<Vec<_>>());
+            let schema = schema_for(fields, format_for);
             let stream = encode_rows(schema.clone(), rows);
             Response::Query(QueryResponse::new(schema, stream))
         }
@@ -350,6 +360,12 @@ fn response_for(_session: &Session, outcome: &Outcome) -> Response {
     }
 }
 
+/// Result-column formats for the simple query protocol: PostgreSQL always
+/// replies to a `Query` message in text format.
+fn simple_format(_idx: usize) -> FieldFormat {
+    FieldFormat::Text
+}
+
 #[async_trait]
 impl SimpleQueryHandler for PgHandlers {
     async fn do_query<C>(&self, client: &mut C, query: &str) -> PgWireResult<Vec<Response>>
@@ -369,7 +385,7 @@ impl SimpleQueryHandler for PgHandlers {
         };
         Ok(outcomes
             .iter()
-            .map(|o| response_for(&session, o))
+            .map(|o| response_for(&session, o, simple_format))
             .collect())
     }
 }
@@ -481,7 +497,14 @@ impl ExtendedQueryHandler for PgHandlers {
                 last_insert_id: None,
                 command: "OK".to_string(),
             });
-        Ok(response_for(&session, &outcome))
+        // Honor the formats the client requested in Bind (tokio-postgres
+        // asks for binary by default; psql-style simple queries are text).
+        let portal_format = portal.result_column_format.clone();
+        Ok(response_for(
+            &session,
+            &outcome,
+            move |idx| portal_format.format_for(idx),
+        ))
     }
 
     async fn do_describe_statement<C>(

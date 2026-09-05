@@ -41,6 +41,49 @@ cargo run --release -- -c config.toml
 
 将客户端指向监听地址，SQLRedirect 就会解析、重写并转发每条查询到配置的后端。
 
+两种监听器的现成配置模板见 [`config.example.toml`](config.example.toml)。
+
+## 用例演示
+
+运行内置的端到端演示——它在进程内启动代理（后端为一个临时 SQLite 文件），
+并用真实的 PostgreSQL 客户端库连接：
+
+```bash
+cargo run --example demo
+```
+
+```text
+backend   : sqlite:///.../sqlredirect-demo.db?mode=rwc
+dialect   : Sqlite
+listening : postgres://demo:demo@127.0.0.1:56663
+
+connected : tokio-postgres
+[ok] CREATE TABLE users (id SERIAL PRIMARY KEY, ...)
+     -> translated to SQLite AUTOINCREMENT DDL
+[ok] INSERT 3 rows via $n placeholders (rewritten to literals)
+[ok] SELECT id, name, age FROM users ORDER BY id
+      1 | Alice  | 30
+      2 | Bob    | 25
+      3 | Carol  | 41
+[ok] upsert id=1 -> Some(("Alicia", 31))
+[ok] count(*) = 3
+
+demo complete.
+```
+
+演示覆盖的场景：
+
+| 客户端发送（PostgreSQL）                 | 代理的处理                             |
+|------------------------------------------|----------------------------------------|
+| `CREATE TABLE ... id SERIAL PRIMARY KEY` | 翻译为 SQLite 的 AUTOINCREMENT DDL     |
+| `INSERT ... VALUES ($1, $2)`             | 占位符替换为带类型的字面量             |
+| `SELECT id, name, age ...`               | 结果行以二进制线协议编码               |
+| `ON CONFLICT (id) DO UPDATE`             | 以 SQLite 原生语法透传                 |
+| `SELECT count(*)`                        | BigInt 映射为 INT8 线类型              |
+
+同样的流程也适用于 `psql` 连接 `postgres` 监听器，或任意 MySQL 客户端
+（`mysql`、`mariadb`、DBeaver 等）连接 `mysql` 监听器。
+
 ## 配置
 
 `Config` 是一个 TOML 文件，包含一个或多个 `[[listeners]]` 条目：

@@ -22,6 +22,10 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[dev-dependencies]
+# Used by examples/demo.rs to connect through the proxy as a real client.
+tokio-postgres = "0.7"
+
 [profile.release]
 lto = "thin"
 

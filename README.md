@@ -44,6 +44,50 @@ cargo run --release -- -c config.toml
 Point your client at the listener address. SQLRedirect parses, rewrites, and
 forwards each query to the configured backend.
 
+A ready-to-edit template with both listener kinds is provided in
+[`config.example.toml`](config.example.toml).
+
+## Demo
+
+Run the bundled end-to-end demo — it starts the proxy in-process against a
+throwaway SQLite file and connects with a real PostgreSQL client library:
+
+```bash
+cargo run --example demo
+```
+
+```text
+backend   : sqlite:///.../sqlredirect-demo.db?mode=rwc
+dialect   : Sqlite
+listening : postgres://demo:demo@127.0.0.1:56663
+
+connected : tokio-postgres
+[ok] CREATE TABLE users (id SERIAL PRIMARY KEY, ...)
+     -> translated to SQLite AUTOINCREMENT DDL
+[ok] INSERT 3 rows via $n placeholders (rewritten to literals)
+[ok] SELECT id, name, age FROM users ORDER BY id
+      1 | Alice  | 30
+      2 | Bob    | 25
+      3 | Carol  | 41
+[ok] upsert id=1 -> Some(("Alicia", 31))
+[ok] count(*) = 3
+
+demo complete.
+```
+
+What the demo exercises:
+
+| Client sends (PostgreSQL)                       | Proxy does                                     |
+|-------------------------------------------------|------------------------------------------------|
+| `CREATE TABLE ... id SERIAL PRIMARY KEY`        | `INTEGER PRIMARY KEY AUTOINCREMENT` on SQLite  |
+| `INSERT ... VALUES ($1, $2)`                    | placeholders become typed literals             |
+| `SELECT id, name, age ...`                      | rows encoded in the binary wire format         |
+| `ON CONFLICT (id) DO UPDATE`                    | passed through in SQLite-native form           |
+| `SELECT count(*)`                               | BigInt mapped to the INT8 wire type            |
+
+The same flow works from `psql` against a `postgres` listener, or from any
+MySQL client (`mysql`, `mariadb`, DBeaver, ...) against a `mysql` listener.
+
 ## Configuration
 
 `Config` is a TOML file containing one or more `[[listeners]]` entries:

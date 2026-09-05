@@ -1,0 +1,22 @@
+# SQLRedirect example configuration.
+# Copy to config.toml and adjust the backend URLs for your machine.
+
+[[listeners]]
+# A PostgreSQL front-end backed by an embedded SQLite file.
+protocol = "postgres"
+addr     = "127.0.0.1:5439"
+# Linux/macOS:  sqlite:///tmp/sqlredirect-demo.db?mode=rwc
+# Windows:      sqlite:///C:/data/sqlredirect-demo.db?mode=rwc
+backend  = "sqlite:///tmp/sqlredirect-demo.db?mode=rwc"
+username = "demo"
+password = "demo"
+max_connections = 16
+
+[[listeners]]
+# A MySQL front-end backed by a real MySQL server.
+protocol = "mysql"
+addr     = "127.0.0.1:3307"
+backend  = "mysql://app:app@127.0.0.1:3306/myapp"
+username = "demo"
+password = "demo"
+max_connections = 16
